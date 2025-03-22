@@ -1,0 +1,100 @@
+name: 'Test'
+description: 'Run tests for Node.js, Python, or Go projects'
+
+inputs:
+  project_type:
+    description: 'The type of project (node, python, go)'
+    required: false
+    default: 'node'
+  node_version:
+    description: 'The Node.js version to use'
+    required: false
+    default: '20'
+  python_version:
+    description: 'The Python version to use'
+    required: false
+    default: '3.11'
+  go_version:
+    description: 'The Go version to use'
+    required: false
+    default: '1.24'
+  run_lint:
+    description: 'Whether to run linting'
+    required: false
+    default: 'true'
+  working_directory:
+    description: 'The directory to run tests in'
+    required: false
+    default: '.'
+
+outputs:
+  sha:
+    description: 'The SHA that was tested'
+    value: ${{ github.sha }}
+  ref:
+    description: 'The ref that was tested'
+    value: ${{ github.ref }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      if: inputs.project_type == 'node'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: 'npm'
+    
+    - name: Setup Python
+      if: inputs.project_type == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+        cache: 'pip'
+    
+    - name: Setup Go
+      if: inputs.project_type == 'go'
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go_version }}
+        cache: true
+    
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        cd ${{ inputs.working_directory }}
+        if [ "${{ inputs.project_type }}" = "node" ]; then
+          npm ci
+        elif [ "${{ inputs.project_type }}" = "python" ]; then
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        elif [ "${{ inputs.project_type }}" = "go" ]; then
+          go mod download
+        fi
+    
+    - name: Run Tests
+      shell: bash
+      run: |
+        cd ${{ inputs.working_directory }}
+        if [ "${{ inputs.project_type }}" = "node" ]; then
+          npm test
+        elif [ "${{ inputs.project_type }}" = "python" ]; then
+          python -m pytest
+        elif [ "${{ inputs.project_type }}" = "go" ]; then
+          go test ./...
+        fi
+    
+    - name: Run Linting
+      if: inputs.run_lint == 'true'
+      shell: bash
+      run: |
+        cd ${{ inputs.working_directory }}
+        if [ "${{ inputs.project_type }}" = "node" ]; then
+          npm run lint
+        elif [ "${{ inputs.project_type }}" = "python" ]; then
+          pip install flake8
+          flake8 .
+        elif [ "${{ inputs.project_type }}" = "go" ]; then
+          go install golang.org/x/lint/golint@latest
+          golint ./...
+        fi 

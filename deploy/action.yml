@@ -1,0 +1,147 @@
+name: Deploy
+description: Deploys applications to different environments and platforms
+
+inputs:
+  version:
+    required: true
+    description: "The version to deploy"
+  sha:
+    required: true
+    description: "The commit SHA to deploy"
+  environment:
+    required: true
+    description: "The environment to deploy to (e.g., stg, prd)"
+  github_environment:
+    required: false
+    description: "The GitHub environment (staging/production)"
+  deployment_type:
+    required: false
+    default: "infra"
+    description: "Type of deployment (infra, k8s, lambda, etc.)"
+  working_directory:
+    required: false
+    default: "infra"
+    description: "Directory containing infrastructure code"
+  aws_region:
+    required: false
+    default: "us-east-1"
+    description: "AWS region to deploy to"
+  aws_assume_role:
+    required: false
+    description: "AWS role ARN to assume for deployment"
+  notify_slack:
+    required: false
+    default: "true"
+    description: "Whether to send Slack notifications"
+  slack_channel:
+    required: false
+    description: "Slack channel to notify"
+  notification_emoji:
+    required: false
+    default: ":rocket:"
+    description: "Emoji to use in notifications"
+
+outputs:
+  deployed_version:
+    description: "The version that was deployed"
+    value: ${{ inputs.version }}
+  deployment_url:
+    description: "URL of the deployed application"
+    value: ${{ steps.deployment.outputs.url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check Environment
+      id: env_check
+      shell: bash
+      run: |
+        echo "Preparing to deploy version ${{ inputs.version }} (SHA: ${{ inputs.sha }}) to environment: ${{ inputs.environment }}"
+        echo "Deployment type: ${{ inputs.deployment_type }}"
+        
+        # Validate environment
+        if [[ "${{ inputs.environment }}" != "stg" && "${{ inputs.environment }}" != "prd" && "${{ inputs.environment }}" != "dev" ]]; then
+          echo "::error::Invalid environment: ${{ inputs.environment }}. Must be one of: dev, stg, prd"
+          exit 1
+        fi
+        
+        # Set environment variables based on environment
+        if [[ "${{ inputs.environment }}" == "prd" ]]; then
+          echo "is_production=true" >> $GITHUB_OUTPUT
+          echo "env_name=production" >> $GITHUB_OUTPUT
+          echo "env_short=prd" >> $GITHUB_OUTPUT
+        elif [[ "${{ inputs.environment }}" == "stg" ]]; then
+          echo "is_production=false" >> $GITHUB_OUTPUT
+          echo "env_name=staging" >> $GITHUB_OUTPUT
+          echo "env_short=stg" >> $GITHUB_OUTPUT
+        else
+          echo "is_production=false" >> $GITHUB_OUTPUT
+          echo "env_name=development" >> $GITHUB_OUTPUT
+          echo "env_short=dev" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: ${{ inputs.aws_region }}
+        role-to-assume: ${{ inputs.aws_assume_role }}
+        role-session-name: github-action-${{ github.run_id }}
+    
+    - name: Setup Deployment
+      id: setup
+      shell: bash
+      run: |
+        echo "Setting up deployment environment"
+        cd ${{ inputs.working_directory }}
+        
+        # Output the deployment start time for tracking
+        echo "deploy_start_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+        
+        # Create a deployment ID for tracking
+        DEPLOY_ID=$(echo "${{ github.repository }}-${{ inputs.environment }}-${{ inputs.version }}" | tr '[:upper:]' '[:lower:]' | tr '/' '-')
+        echo "deploy_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
+    
+    - name: Run Deployment
+      id: deployment
+      shell: bash
+      run: |
+        cd ${{ inputs.working_directory }}
+        
+        # Different deployment strategies based on type
+        case "${{ inputs.deployment_type }}" in
+          "infra")
+            echo "Running infrastructure deployment with Terraform"
+            # Example terraform commands would go here
+            echo "url=https://${{ steps.env_check.outputs.env_short }}.example.com" >> $GITHUB_OUTPUT
+            ;;
+          "k8s")
+            echo "Deploying to Kubernetes"
+            # Example kubernetes commands would go here
+            echo "url=https://${{ steps.env_check.outputs.env_short }}-k8s.example.com" >> $GITHUB_OUTPUT
+            ;;
+          "lambda")
+            echo "Deploying AWS Lambda functions"
+            # Example lambda deployment commands would go here
+            echo "url=https://${{ inputs.environment }}-lambda.example.com" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "Running default deployment procedure"
+            echo "url=https://${{ inputs.environment }}.example.com" >> $GITHUB_OUTPUT
+            ;;
+        esac
+        
+        echo "✅ Deployment completed successfully!"
+    
+    - name: Send Slack Notification
+      id: slack
+      if: ${{ inputs.notify_slack == 'true' }}
+      shell: bash
+      run: |
+        # This is a placeholder for sending a notification to Slack
+        echo "Sending deployment notification to Slack"
+        echo "Channel: ${{ inputs.slack_channel || 'default-deploys' }}"
+        echo "Message: ${{ inputs.notification_emoji }} Successfully deployed version ${{ inputs.version }} to ${{ steps.env_check.outputs.env_name }}"
+        
+        # Actual implementation would use a Slack webhook or Slack GitHub action
+        
+        echo "notification_sent=true" >> $GITHUB_OUTPUT 

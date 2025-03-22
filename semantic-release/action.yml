@@ -1,0 +1,461 @@
+name: Semantic Release
+description: Handles versioning and creating releases based on semantic versioning
+
+inputs:
+  sha:
+    required: true
+    description: "The commit SHA to release"
+  ref:
+    required: true
+    description: "The git ref (branch or PR reference)"
+  is_beta:
+    required: true
+    description: "Whether this is a beta release"
+  github_environment:
+    required: false
+    description: "The GitHub environment (staging/production)"
+  dry_run:
+    required: false
+    default: "false"
+    description: "If true, only check if a release is needed without creating it"
+  has_build_artifacts:
+    required: false
+    default: "false"
+    description: "Whether the workflow should expect build artifacts to be uploaded"
+  artifact_name:
+    required: false
+    default: "build"
+    description: "Name of the build artifact to include in the release"
+
+outputs:
+  version:
+    description: "The version that was released"
+    value: ${{ steps.version.outputs.value }}
+  sha:
+    description: "The SHA that was released"
+    value: ${{ inputs.sha }}
+  should_release:
+    description: "Whether a release should be created"
+    value: ${{ steps.check.outputs.should_release }}
+  next_version:
+    description: "The next version that would be created"
+    value: ${{ steps.check.outputs.next_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ inputs.sha }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Install Dependencies
+      shell: bash
+      run: npm install
+
+    - name: Check Version
+      id: check
+      shell: bash
+      run: |
+        echo "Setting up version detection..."
+        mkdir -p /tmp/release-info
+
+        echo "Finding latest published release version..."
+        LATEST_RELEASE=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // "v0.1.0"' | sed 's/^v//')
+        echo "Latest published release: $LATEST_RELEASE"
+
+        echo "Running semantic-release to analyze commits..."
+        SEMANTIC_OUTPUT=$(npx semantic-release --dry-run --no-ci --branches "${GITHUB_REF_NAME-main}" 2>&1 || true)
+        echo "$SEMANTIC_OUTPUT" > /tmp/semantic-output.txt
+
+        echo "Semantic-release output:"
+        cat /tmp/semantic-output.txt
+
+        SHOULD_RELEASE="false"
+        RELEASE_TYPE=""
+
+        if grep -q "Analysis of .* commits complete: patch release" /tmp/semantic-output.txt; then
+          RELEASE_TYPE="patch"
+          SHOULD_RELEASE="true"
+        elif grep -q "Analysis of .* commits complete: minor release" /tmp/semantic-output.txt; then
+          RELEASE_TYPE="minor"
+          SHOULD_RELEASE="true"
+        elif grep -q "Analysis of .* commits complete: major release" /tmp/semantic-output.txt; then
+          RELEASE_TYPE="major"
+          SHOULD_RELEASE="true"
+        fi
+
+        if [[ "$SHOULD_RELEASE" == "true" ]]; then
+          IFS='.' read -r major minor patch <<< "$LATEST_RELEASE"
+
+          if [[ "$RELEASE_TYPE" == "major" ]]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif [[ "$RELEASE_TYPE" == "minor" ]]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          NEXT_VERSION="${major}.${minor}.${patch}"
+          echo "→ Release needed (${RELEASE_TYPE}): $LATEST_RELEASE → $NEXT_VERSION"
+        else
+          if [[ "${{ inputs.is_beta }}" == "true" ]]; then
+            SHOULD_RELEASE="true"
+
+            IFS='.' read -r major minor patch <<< "$LATEST_RELEASE"
+            patch=$((patch + 1))
+            NEXT_VERSION="${major}.${minor}.${patch}"
+
+            echo "→ Creating beta release based on incremented version: $LATEST_RELEASE → $NEXT_VERSION"
+          else
+            NEXT_VERSION="$LATEST_RELEASE"
+            echo "→ No release needed. Using latest version: $NEXT_VERSION"
+          fi
+        fi
+
+        echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+        echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+        echo "$NEXT_VERSION" > /tmp/release-info/version.txt
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Get PR Number
+      id: pr
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && inputs.is_beta == 'true' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { repo, owner } = context.repo;
+          const branch = '${{ inputs.ref }}'.replace('refs/pull/', '').replace('/merge', '');
+
+          if ('${{ inputs.ref }}'.startsWith('refs/pull/')) {
+            core.setOutput('number', branch);
+          } else {
+            const pulls = await github.rest.pulls.list({
+              owner,
+              repo,
+              head: `${owner}:${branch}`,
+              state: 'open'
+            });
+            if (pulls.data.length > 0) {
+              core.setOutput('number', pulls.data[0].number);
+            }
+          }
+
+    - name: Create Version
+      id: version
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' }}
+      shell: bash
+      run: |
+        set -eo pipefail
+
+        BASE_VERSION=$(cat /tmp/release-info/version.txt)
+        echo "Base version: $BASE_VERSION"
+
+        if [[ "${{ inputs.is_beta }}" == "true" ]]; then
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          if [[ -n "$PR_NUMBER" ]]; then
+            LATEST_BETA=$(gh release list --json tagName --jq ".[] | select(.tagName | startswith(\"v${BASE_VERSION}-beta.pr${PR_NUMBER}\")) | .tagName" | sort -V | tail -n 1)
+
+            if [[ -n "$LATEST_BETA" ]]; then
+              BETA_NUMBER=$(echo "$LATEST_BETA" | grep -oP "beta\.pr${PR_NUMBER}\.\K[0-9]+" || echo "0")
+              NEXT_BETA=$((BETA_NUMBER + 1))
+            else
+              NEXT_BETA=1
+            fi
+
+            VERSION="${BASE_VERSION}-beta.pr${PR_NUMBER}.${NEXT_BETA}"
+            echo "Created beta version: $VERSION"
+          else
+            VERSION="${BASE_VERSION}-beta.1"
+            echo "Created beta version without PR number: $VERSION"
+          fi
+        else
+          VERSION="${BASE_VERSION}"
+          echo "Created official release: $VERSION"
+        fi
+
+        echo "value=$VERSION" >> $GITHUB_OUTPUT
+        echo "$VERSION" > version.txt
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Manage Beta Releases
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && inputs.is_beta == 'true' && steps.pr.outputs.number != '' }}
+      shell: bash
+      run: |
+        PR_NUMBER="${{ steps.pr.outputs.number }}"
+        BASE_VERSION=$(cat /tmp/release-info/version.txt)
+        CURRENT_VERSION="${{ steps.version.outputs.value }}"
+
+        echo "Managing beta releases for PR #${PR_NUMBER} with base version ${BASE_VERSION}"
+
+        CLEAN_BASE_VERSION=$(echo "${BASE_VERSION}" | sed -E 's/-beta\.pr.*$//')
+        echo "Clean base version: ${CLEAN_BASE_VERSION}"
+
+        RELEASES=$(gh release list --limit 100 --json name,tagName,isPrerelease --jq '.[] | select(.isPrerelease == true) | .tagName')
+        PR_BETAS=$(echo "$RELEASES" | grep "beta.pr${PR_NUMBER}" || echo "")
+
+        if [[ -n "$PR_BETAS" ]]; then
+          echo "Found beta releases for PR #${PR_NUMBER}: $(echo "$PR_BETAS" | wc -l)"
+
+          SAME_VERSION_BETAS=$(echo "$PR_BETAS" | grep "^v${CLEAN_BASE_VERSION}-beta.pr${PR_NUMBER}" || echo "")
+          SAME_VERSION_COUNT=$(echo "$SAME_VERSION_BETAS" | wc -l)
+
+          echo "Found ${SAME_VERSION_COUNT} beta releases with base version ${CLEAN_BASE_VERSION}"
+
+          if [[ $SAME_VERSION_COUNT -gt 3 ]]; then
+            BETAS_TO_DELETE=$(echo "$SAME_VERSION_BETAS" | sort -V | head -n $(($SAME_VERSION_COUNT - 3)))
+
+            if [[ -n "$BETAS_TO_DELETE" ]]; then
+              echo "Will delete old beta releases: $BETAS_TO_DELETE"
+              for TAG in $BETAS_TO_DELETE; do
+                echo "Deleting release $TAG..."
+                gh release delete "$TAG" --yes || echo "Warning: Failed to delete release $TAG, it may have been already deleted"
+              done
+            fi
+          fi
+
+          if [[ "$CLEAN_BASE_VERSION" =~ ^[1-9] ]]; then
+            ZERO_RELEASES=$(echo "$PR_BETAS" | grep "^v0\." || echo "")
+
+            if [[ -n "$ZERO_RELEASES" ]]; then
+              echo "Found ${ZERO_RELEASES} 0.x beta releases to clean up"
+              for TAG in $ZERO_RELEASES; do
+                echo "Deleting 0.x release $TAG..."
+                gh release delete "$TAG" --yes || echo "Warning: Failed to delete release $TAG, it may have been already deleted"
+              done
+            fi
+          fi
+        else
+          echo "No existing beta releases found for PR #${PR_NUMBER}"
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Check if tag exists
+      id: check_tag
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' }}
+      shell: bash
+      run: |
+        VERSION="${{ steps.version.outputs.value }}"
+
+        git fetch --tags
+
+        if git show-ref --tags | grep -q "refs/tags/v$VERSION"; then
+          echo "Tag v$VERSION exists locally"
+          LOCAL_EXISTS="true"
+        else
+          echo "Tag v$VERSION does not exist locally"
+          LOCAL_EXISTS="false"
+        fi
+
+        if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q "refs/tags/v$VERSION"; then
+          echo "Tag v$VERSION exists on remote"
+          REMOTE_EXISTS="true"
+        else
+          echo "Tag v$VERSION does not exist on remote"
+          REMOTE_EXISTS="false"
+        fi
+
+        if [[ "$LOCAL_EXISTS" == "true" && "$REMOTE_EXISTS" == "false" ]]; then
+          echo "Tag exists locally but not remotely. Deleting local tag..."
+          git tag -d "v$VERSION" || true
+          LOCAL_EXISTS="false"
+        fi
+
+        if [[ "$LOCAL_EXISTS" == "true" || "$REMOTE_EXISTS" == "true" ]]; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Debug Release Conditions
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' }}
+      shell: bash
+      run: |
+        echo "Checking why release might not be created:"
+        echo "dry_run input: ${{ inputs.dry_run }}"
+        echo "should_release output: ${{ steps.check.outputs.should_release }}"
+        echo "tag exists: ${{ steps.check_tag.outputs.exists }}"
+        echo "Release version: ${{ steps.version.outputs.value }}"
+        echo "Is beta: ${{ inputs.is_beta }}"
+        echo "GitHub ref: ${{ github.ref }}"
+
+        echo "Conditional for Create Release step: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && steps.check_tag.outputs.exists != 'true' }}"
+
+        if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+          echo "❌ Release creation skipped: dry_run is true"
+        elif [[ "${{ steps.check.outputs.should_release }}" != "true" ]]; then
+          echo "❌ Release creation skipped: should_release is not 'true'"
+        elif [[ "${{ steps.check_tag.outputs.exists }}" == "true" ]]; then
+          echo "❌ Release creation skipped: tag already exists"
+        else
+          echo "✅ All conditions for release creation are met!"
+        fi
+
+        VERSION="${{ steps.version.outputs.value }}"
+        echo "Performing independent tag verification checks:"
+
+        git fetch --tags --force
+
+        echo "Local tags matching $VERSION:"
+        git tag -l | grep "$VERSION" || echo "  - None found"
+
+        echo "Remote tags matching $VERSION:"
+        git ls-remote --tags origin | grep "$VERSION" || echo "  - None found"
+
+        if git show-ref --tags | grep -q "refs/tags/v$VERSION"; then
+          echo "⚠️ Warning: Tag v$VERSION exists locally"
+        else
+          echo "✅ Confirmed: Tag v$VERSION does not exist locally"
+        fi
+
+        if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q "refs/tags/v$VERSION"; then
+          echo "⚠️ Warning: Tag v$VERSION exists on remote"
+        else
+          echo "✅ Confirmed: Tag v$VERSION does not exist on remote"
+        fi
+
+    - name: Download artifacts
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && steps.check_tag.outputs.exists != 'true' && inputs.has_build_artifacts == 'true' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ./release-artifacts
+
+    - name: Create Release
+      id: create_release
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && steps.check_tag.outputs.exists != 'true' }}
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      with:
+        tag_name: v${{ steps.version.outputs.value }}
+        release_name: ${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} ${{ steps.version.outputs.value }}
+        prerelease: ${{ inputs.is_beta == 'true' }}
+
+    - name: Debug Release Creation
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && steps.check_tag.outputs.exists != 'true' }}
+      shell: bash
+      run: |
+        if [[ -n "${{ steps.create_release.outputs.id }}" ]]; then
+          echo "✅ Release created successfully with ID: ${{ steps.create_release.outputs.id }}"
+        else
+          echo "❌ Release creation may have failed (no ID output)"
+          echo "Check if the release was actually created on GitHub"
+        fi
+
+    - name: Create Release with GitHub CLI (Fallback)
+      id: create_release_fallback
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && steps.check_tag.outputs.exists != 'true' && steps.create_release.outputs.id == '' }}
+      shell: bash
+      run: |
+        VERSION="${{ steps.version.outputs.value }}"
+        RELEASE_NAME="${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} $VERSION"
+        IS_PRERELEASE="${{ inputs.is_beta == 'true' && '--prerelease' || '' }}"
+
+        echo "Attempting fallback release creation with GitHub CLI..."
+
+        if ! git show-ref --tags | grep -q "refs/tags/v$VERSION"; then
+          echo "Creating git tag: v$VERSION"
+          git tag v$VERSION
+          git push origin v$VERSION
+        fi
+
+        echo "Creating GitHub release: $RELEASE_NAME"
+        if [[ "${{ inputs.has_build_artifacts }}" == "true" ]]; then
+          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release $VERSION created via fallback mechanism" ./release-artifacts/* 2>&1)
+        else
+          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release $VERSION created via fallback mechanism" 2>&1)
+        fi
+
+        echo "GitHub CLI output: $RELEASE_OUTPUT"
+
+        if [[ "$RELEASE_OUTPUT" == *"Release created"* ]]; then
+          echo "✅ Fallback release creation succeeded!"
+        else
+          echo "❌ Fallback release creation also failed. Please check GitHub manually."
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Upload Version
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: version
+        path: version.txt
+
+    - name: Comment on PR
+      if: ${{ inputs.dry_run != 'true' && steps.check.outputs.should_release == 'true' && inputs.is_beta == 'true' && steps.pr.outputs.number != '' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { repo, owner } = context.repo;
+          const prNumber = '${{ steps.pr.outputs.number }}';
+          const version = '${{ steps.version.outputs.value }}';
+          const workflowRunUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number: parseInt(prNumber),
+          });
+
+          const betaReleaseComments = comments.filter(comment =>
+            comment.user.login === 'github-actions[bot]' &&
+            comment.body.includes('## 🚀 Beta Release Published!')
+          );
+
+          console.log(`Found ${betaReleaseComments.length} previous beta release comments to minimize`);
+
+          for (const comment of betaReleaseComments) {
+            try {
+              const minimizeQuery = `
+                mutation MinimizeComment {
+                  minimizeComment(input: {
+                    subjectId: "${comment.node_id}",
+                    classifier: OUTDATED
+                  }) {
+                    minimizedComment {
+                      isMinimized
+                      minimizedReason
+                    }
+                  }
+                }
+              `;
+
+              await github.graphql(minimizeQuery);
+              console.log(`Minimized comment ${comment.id}`);
+            } catch (error) {
+              console.log(`Failed to minimize comment ${comment.id}: ${error.message}`);
+              if (error.errors) {
+                console.log(`GraphQL errors: ${JSON.stringify(error.errors)}`);
+              }
+            }
+          }
+
+          const body = `## 🚀 Beta Release Published!
+
+          Beta release \`v${version}\` has been published and is being deployed to the staging environment for testing.
+
+          You can:
+          1. [View the latest release](${context.serverUrl}/${owner}/${repo}/releases/tag/v${version})
+          2. [Monitor deployment progress](${workflowRunUrl})`;
+
+          await github.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: parseInt(prNumber),
+            body: body
+          });
+          console.log(`Created new comment for beta release ${version}`); 
