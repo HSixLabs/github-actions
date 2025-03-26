@@ -340,7 +340,7 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         tag_name: v${{ steps.version.outputs.value }}
-        release_name: ${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} ${{ steps.version.outputs.value }}
+        release_name: ${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} v${{ steps.version.outputs.value }}
         prerelease: ${{ inputs.is_beta == 'true' }}
 
     - name: Debug Release Creation
@@ -360,7 +360,7 @@ runs:
       shell: bash
       run: |
         VERSION="${{ steps.version.outputs.value }}"
-        RELEASE_NAME="${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} $VERSION"
+        RELEASE_NAME="${{ inputs.is_beta == 'true' && 'Beta Release' || 'Release' }} v$VERSION"
         IS_PRERELEASE="${{ inputs.is_beta == 'true' && '--prerelease' || '' }}"
 
         echo "Attempting fallback release creation with GitHub CLI..."
@@ -373,9 +373,9 @@ runs:
 
         echo "Creating GitHub release: $RELEASE_NAME"
         if [[ "${{ inputs.has_build_artifacts }}" == "true" ]]; then
-          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release $VERSION created via fallback mechanism" ./release-artifacts/* 2>&1)
+          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release v$VERSION created via fallback mechanism" ./release-artifacts/* 2>&1)
         else
-          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release $VERSION created via fallback mechanism" 2>&1)
+          RELEASE_OUTPUT=$(gh release create v$VERSION $IS_PRERELEASE --title "$RELEASE_NAME" --notes "Release v$VERSION created via fallback mechanism" 2>&1)
         fi
 
         echo "GitHub CLI output: $RELEASE_OUTPUT"
