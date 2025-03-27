@@ -49,14 +49,14 @@ runs:
         fetch-depth: 0
         ref: ${{ inputs.sha }}
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
       with:
-        node-version: '20'
+        bun-version: 'latest'
 
     - name: Install Dependencies
       shell: bash
-      run: npm install
+      run: bun install
 
     - name: Check Version
       id: check
@@ -70,7 +70,7 @@ runs:
         echo "Latest published release: $LATEST_RELEASE"
 
         echo "Running semantic-release to analyze commits..."
-        SEMANTIC_OUTPUT=$(npx semantic-release --dry-run --no-ci --branches "${GITHUB_REF_NAME-main}" 2>&1 || true)
+        SEMANTIC_OUTPUT=$(bunx semantic-release --dry-run --no-ci --branches "${GITHUB_REF_NAME-main}" 2>&1 || true)
         echo "$SEMANTIC_OUTPUT" > /tmp/semantic-output.txt
 
         echo "Semantic-release output:"
