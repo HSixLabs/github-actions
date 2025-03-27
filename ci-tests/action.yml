@@ -5,16 +5,20 @@ inputs:
   project_type:
     description: 'The type of project (node, python, go, bun)'
     required: true
-  node_version:
-    description: 'The Node.js version to use'
-    required: false
-    default: 'latest'
   python_version:
     description: 'The Python version to use'
     required: false
     default: 'latest'
   go_version:
     description: 'The Go version to use'
+    required: false
+    default: 'latest'
+  node_version:
+    description: 'The Node.js version to use'
+    required: false
+    default: 'latest'
+  bun_version:
+    description: 'The Bun version to use'
     required: false
     default: 'latest'
   run_lint:
@@ -37,13 +41,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Node.js
-      if: inputs.project_type == 'node'
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ inputs.node_version }}
-        cache: 'npm'
-    
     - name: Setup Python
       if: inputs.project_type == 'python'
       uses: actions/setup-python@v5
@@ -58,6 +55,19 @@ runs:
         go-version: ${{ inputs.go_version }}
         cache: true
     
+    - name: Setup Node.js
+      if: inputs.project_type == 'node'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: 'npm'
+
+    - name: Setup Bun
+      if: inputs.project_type == 'bun'
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: ${{ inputs.bun_version }}
+    
     - name: Install Dependencies
       shell: bash
       run: |
@@ -69,6 +79,8 @@ runs:
           pip install -r requirements.txt
         elif [ "${{ inputs.project_type }}" = "go" ]; then
           go mod download
+        elif [ "${{ inputs.project_type }}" = "bun" ]; then
+          bun install
         fi
     
     - name: Run Tests
@@ -81,6 +93,8 @@ runs:
           python -m pytest
         elif [ "${{ inputs.project_type }}" = "go" ]; then
           go test ./...
+        elif [ "${{ inputs.project_type }}" = "bun" ]; then
+          bun test
         fi
     
     - name: Run Linting
@@ -100,4 +114,6 @@ runs:
           else
             golangci-lint run ./...
           fi
+        elif [ "${{ inputs.project_type }}" = "bun" ]; then
+          bun run lint
         fi 
