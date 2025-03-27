@@ -95,6 +95,10 @@ runs:
           pip install flake8
           flake8 .
         elif [ "${{ inputs.project_type }}" = "go" ]; then
-          go install golang.org/x/lint/golint@latest
-          golint ./...
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          if [ -f ".golangci.yml" ]; then
+            golangci-lint run --config=.golangci.yml ./...
+          else
+            golangci-lint run ./...
+          fi
         fi 
