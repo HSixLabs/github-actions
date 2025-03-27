@@ -3,9 +3,8 @@ description: 'Run tests for Node.js, Python, or Go projects'
 
 inputs:
   project_type:
-    description: 'The type of project (node, python, go)'
-    required: false
-    default: 'node'
+    description: 'The type of project (node, python, go, bun)'
+    required: true
   node_version:
     description: 'The Node.js version to use'
     required: false
