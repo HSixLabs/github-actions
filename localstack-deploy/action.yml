@@ -106,7 +106,7 @@ runs:
         timeout=30
         elapsed=0
         while true; do
-          response=$(curl -s ${{ inputs.localstack_endpoint }}/health)
+          response=$(curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health)
           echo "Health check response: $response"
           
           if echo "$response" | grep -q '"running": true'; then
@@ -125,7 +125,7 @@ runs:
           elapsed=$((elapsed+1))
         done
         echo "LocalStack is ready"
-        curl -s ${{ inputs.localstack_endpoint }}/health
+        curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health
 
     - name: Deploy Resources
       id: deployment
