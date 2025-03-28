@@ -85,15 +85,25 @@ runs:
       run: |
         ${{ inputs.build_command }}
 
-    - name: Setup LocalStack
-      uses: LocalStack/setup-localstack@v0.2.2
+    - name: Set up LocalStack
+      uses: localstack/setup-localstack@v0.2.2
       with:
         image-tag: ${{ inputs.localstack_image_tag }}
-        install-awslocal: true
-        configuration: |
-          DEBUG=${{ inputs.localstack_debug }}
-          LAMBDA_EXECUTOR=docker
-          DOCKER_HOST_FROM_CONTAINER=host.docker.internal
+        debug: ${{ inputs.localstack_debug }}
+        environment:
+          LOCALSTACK_DEBUG: 1
+          SERVICES: s3,sqs,sns,lambda,iam,cloudwatch,logs
+          DOCKER_HOST: unix:///var/run/docker.sock
+          LAMBDA_EXECUTOR: local
+          DATA_DIR: /tmp/localstack/data
+          DEBUG: 1
+          LS_LOG: debug
+          LS_LOG_LEVEL: debug
+        health-check:
+          interval: 5s
+          timeout: 10s
+          retries: 6
+          start-period: 10s
 
     - name: Verify LocalStack is running
       shell: bash
