@@ -118,7 +118,7 @@ runs:
         AWS_ACCESS_KEY_ID: test
         AWS_SECRET_ACCESS_KEY: test
         AWS_DEFAULT_REGION: ${{ inputs.aws_default_region }}
-        LOCALSTACK_ENDPOINT: ${{ inputs.localstack_endpoint }}
+        AWS_ENDPOINT_URL: ${{ inputs.localstack_endpoint }}
         AWS_USE_PATH_STYLE: true
         AWS_SKIP_CREDENTIALS_VALIDATION: true
         AWS_SKIP_REQUESTING_ACCOUNT_ID: true

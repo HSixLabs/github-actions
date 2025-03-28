@@ -92,12 +92,8 @@ runs:
         install-awslocal: true
         configuration: |
           DEBUG=${{ inputs.localstack_debug }}
-          SERVICES=s3,sqs,sns,lambda,iam,cloudwatch,logs
-          DOCKER_HOST=unix:///var/run/docker.sock
-          LAMBDA_EXECUTOR=local
-          DATA_DIR=/tmp/localstack/data
-          LS_LOG=debug
-          LS_LOG_LEVEL=debug
+          LAMBDA_EXECUTOR=docker
+          DOCKER_HOST_FROM_CONTAINER=host.docker.internal
 
     - name: Verify LocalStack is running
       shell: bash
@@ -128,19 +124,21 @@ runs:
         curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health
 
     - name: Deploy Resources
-      id: deployment
+      id: deploy
       uses: pulumi/actions@v6
       with:
         command: up
         stack-name: ${{ inputs.stack_name }}
         work-dir: ${{ inputs.work_dir }}
-        refresh: true
+        comment-on-pr: false
+        comment-on-summary: false
+        upsert: true
       env:
         PULUMI_ACCESS_TOKEN: ${{ inputs.pulumi_token }}
         AWS_ACCESS_KEY_ID: test
         AWS_SECRET_ACCESS_KEY: test
         AWS_DEFAULT_REGION: ${{ inputs.aws_default_region }}
-        LOCALSTACK_ENDPOINT: ${{ inputs.localstack_endpoint }}
+        AWS_ENDPOINT_URL: ${{ inputs.localstack_endpoint }}
         AWS_USE_PATH_STYLE: true
         AWS_SKIP_CREDENTIALS_VALIDATION: true
         AWS_SKIP_REQUESTING_ACCOUNT_ID: true
