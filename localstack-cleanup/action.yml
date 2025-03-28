@@ -81,16 +81,27 @@ runs:
         echo "Waiting for LocalStack to be ready..."
         timeout=30
         elapsed=0
-        while ! curl -s ${{ inputs.localstack_endpoint }}/health | grep -q '"ready": true'; do
+        while true; do
+          response=$(curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health)
+          echo "Health check response: $response"
+          
+          if echo "$response" | grep -q '"running": true'; then
+            echo "LocalStack is running"
+            break
+          fi
+          
           if [ $elapsed -ge $timeout ]; then
             echo "Error: LocalStack failed to start within $timeout seconds"
+            echo "Last health check response: $response"
             exit 1
           fi
+          
+          echo "Waiting for LocalStack to be ready... ($elapsed seconds elapsed)"
           sleep 1
           elapsed=$((elapsed+1))
         done
         echo "LocalStack is ready"
-        curl -s ${{ inputs.localstack_endpoint }}/health
+        curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health
 
     - name: Destroy Resources
       id: destroy
