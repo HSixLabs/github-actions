@@ -86,7 +86,7 @@ runs:
         ${{ inputs.build_command }}
 
     - name: Set up LocalStack
-      uses: LocalStack/setup-localstack@v0.2.3
+      uses: LocalStack/setup-localstack@v0.2.2
       with:
         image-tag: ${{ inputs.localstack_image_tag }}
         install-awslocal: true
@@ -102,11 +102,21 @@ runs:
         timeout=30
         elapsed=0
         while true; do
-          response=$(curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health)
+          response=$(curl -s ${{ inputs.localstack_endpoint }}/_localstack/health)
           echo "Health check response: $response"
           
-          if echo "$response" | grep -q '"running": true'; then
-            echo "LocalStack is running"
+          # Check for specific required services
+          required_services=("apigateway" "dynamodb" "lambda" "s3" "iam" "sqs")
+          all_services_available=true
+          for service in "${required_services[@]}"; do
+            if ! echo "$response" | grep -q "\"$service\": \"available\""; then
+              all_services_available=false
+              break
+            fi
+          done
+          
+          if [ "$all_services_available" = true ]; then
+            echo "LocalStack is ready with all required services available"
             break
           fi
           
@@ -121,7 +131,7 @@ runs:
           elapsed=$((elapsed+1))
         done
         echo "LocalStack is ready"
-        curl -s -H "Content-Type: application/json" ${{ inputs.localstack_endpoint }}/_localstack/health
+        curl -s ${{ inputs.localstack_endpoint }}/_localstack/health
 
     - name: Deploy Resources
       id: deploy
