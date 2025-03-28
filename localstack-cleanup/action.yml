@@ -5,7 +5,7 @@ inputs:
   go_version:
     description: 'Go version to use (if needed)'
     required: false
-    default: 'latest'
+    default: 'stable'
   version:
     description: 'Version that was deployed'
     required: true
@@ -52,6 +52,7 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ inputs.go_version }}
+        check-latest: true
           
     - name: Write version file
       shell: bash
